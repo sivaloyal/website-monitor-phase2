@@ -271,6 +271,7 @@ const buildReputation = (accessibility, expiryDate) => {
 
 const getDomainProfile = async (domain) => {
   const hostname = normalizeDomain(domain);
+  console.log('[domainService] resolving domain', { input: domain, hostname });
 
   if (!hostname) {
     throw new Error('A valid domain name is required.');
@@ -281,6 +282,8 @@ const getDomainProfile = async (domain) => {
     queryWhois(hostname),
     getDnsReport(hostname)
   ]);
+
+  console.log('[domainService] WHOIS response for', hostname, whoisData);
 
   const createdDate = whoisData.createdDate;
   const expiryDate = whoisData.expiryDate;

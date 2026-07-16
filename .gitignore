@@ -10,3 +10,6 @@ venv/
 email_delivery.log
 
 .vercel
+
+.vercel
+.env*

@@ -11,8 +11,7 @@ import {
   Settings, Eye, XCircle, Mail, Inbox, Send
 } from 'lucide-react';
 import WebsiteDetail from './WebsiteDetail';
-
-const API_BASE = '/api';
+import { API_BASE } from '../apiConfig';
 
 // ── Score badge colour helper ─────────────────────────────────────────────────
 const scoreColor = (s) => {

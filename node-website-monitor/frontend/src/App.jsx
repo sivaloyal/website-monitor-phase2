@@ -18,6 +18,7 @@ import ImageOptimizationAnalyzer from './components/ImageOptimizationAnalyzer';
 import AdminLogin from './components/AdminLogin';
 import DomainExpiryDashboard from './components/DomainExpiryDashboard';
 import DomainProfile from './components/DomainProfile';
+import { API_BASE, getSocketBaseUrl } from './apiConfig';
 
 // ── Error Boundary — catches render errors in dropdown/child components
 // without blanking the entire page ──────────────────────────────────────────
@@ -42,8 +43,6 @@ class SearchErrorBoundary extends React.Component {
   }
 }
 
-
-const API_BASE = '/api';
 
 // Helper to normalize URLs for WebSocket event comparisons
 const normalizeUrlString = (u) => {
@@ -475,11 +474,10 @@ export default function App() {
     fetchTargets();
 
     // Establish Socket.io connection to backend SRE Gateway
-    const isLocalDev = typeof window !== 'undefined' &&
-      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-    const socketUrl = isLocalDev
+    const socketUrl = getSocketBaseUrl() || (typeof window !== 'undefined' &&
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
       ? 'http://localhost:5000'
-      : 'https://monitor-hg6i.onrender.com';
+      : 'https://monitor-hg6i.onrender.com');
     const socket = io(socketUrl, {
       transports: ['websocket', 'polling']
     });

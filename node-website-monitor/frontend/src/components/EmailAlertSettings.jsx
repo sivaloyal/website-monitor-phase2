@@ -6,8 +6,7 @@ import {
   RefreshCw, Clock, Shield, Globe, Activity, ToggleLeft, ToggleRight,
   AlertTriangle, Info, Inbox
 } from 'lucide-react';
-
-const API_BASE = '/api';
+import { API_BASE } from '../apiConfig';
 
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
