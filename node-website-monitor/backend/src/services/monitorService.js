@@ -451,14 +451,15 @@ const checkWebsiteStatus = async (url) => {
 
   let perf = null;
   let perfSnapshotError = null;
-  try {
+    try {
     perf = await analyzePerformanceSnapshot(url, {
       loadTimeMs: auditReport.loadTimeMs,
       ttfbMs: auditReport.ttfbMs,
       pageSizeKb,
       totalNodes,
       unminifiedCount: scriptCount,
-      monitoringFrequency
+      monitoringFrequency,
+      html: htmlContent
     });
   } catch (err) {
     perfSnapshotError = err.message;
@@ -484,6 +485,19 @@ const checkWebsiteStatus = async (url) => {
   if (perfSnapshotError) {
     auditReport.errors.push(`Performance snapshot fallback used: ${perfSnapshotError}`);
   }
+
+  // Ensure a `pageSpeed` section exists with derived fields so the frontend displays real values
+  perf.pageSpeed = perf.pageSpeed || {};
+  // prefer explicit desktop/mobile pageLoadTime if present, fallback to auditReport.loadTimeMs
+  perf.pageSpeed.pageLoadTime = perf.pageSpeed.pageLoadTime || (perf.tti ? (typeof perf.tti === 'string' ? perf.tti : `${Math.round(perf.tti * 1000)} ms`) : (auditReport.loadTimeMs ? `${auditReport.loadTimeMs} ms` : null));
+  perf.pageSpeed.largestResources = perf.pageSpeed.largestResources || perf.desktopMetrics?.largestResources || perf.desktopMetrics?.largestResourcesCount ? (perf.desktopMetrics.largestResources || []) : perf.pageSpeed.largestResources || [];
+  perf.pageSpeed.largestResourcesCount = perf.pageSpeed.largestResourcesCount || (Array.isArray(perf.pageSpeed.largestResources) ? perf.pageSpeed.largestResources.length : (perf.desktopMetrics?.largestResourcesCount || null));
+  perf.pageSpeed.resourceWaterfall = perf.pageSpeed.resourceWaterfall || perf.desktopMetrics?.resourceWaterfall || perf.desktopMetrics?.waterfall || [];
+  perf.pageSpeed.waterfallItemsCount = perf.pageSpeed.waterfallItemsCount || (Array.isArray(perf.pageSpeed.resourceWaterfall) ? perf.pageSpeed.resourceWaterfall.length : (perf.desktopMetrics?.waterfallItemsCount || null));
+  perf.pageSpeed.renderBlockingResources = perf.pageSpeed.renderBlockingResources || perf.desktopMetrics?.renderBlockingResources || perf.desktopMetrics?.renderBlocking || [];
+  perf.pageSpeed.renderBlockingCount = perf.pageSpeed.renderBlockingCount || (Array.isArray(perf.pageSpeed.renderBlockingResources) ? perf.pageSpeed.renderBlockingResources.length : (perf.desktopMetrics?.renderBlockingCount || null));
+  perf.pageSpeed.criticalRequestChain = perf.pageSpeed.criticalRequestChain || perf.desktopMetrics?.criticalRequestChain || [];
+  perf.pageSpeed.criticalRequestChainsCount = perf.pageSpeed.criticalRequestChainsCount || (Array.isArray(perf.pageSpeed.criticalRequestChain) ? perf.pageSpeed.criticalRequestChain.length : (perf.desktopMetrics?.criticalRequestChainsCount || null));
 
   auditReport.performanceData = JSON.stringify(perf);
   auditReport.desktopMetrics = perf.desktopMetrics || {};

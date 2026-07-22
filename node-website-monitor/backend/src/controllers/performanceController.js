@@ -1,5 +1,6 @@
 const performanceService = require("../services/performanceService");
 const { MonitorHistory } = require("../models/Schemas");
+const { captureWithPlaywright } = require('../utils/harCapture');
 
 const getUrl = (req) => {
     const { url } = req.query;
@@ -56,7 +57,39 @@ const analyzePerformanceController = async (req, res) => {
             });
         }
 
-        const snapshot = await performanceService.analyzePerformanceSnapshot(normalizedUrl);
+        let snapshot = await performanceService.analyzePerformanceSnapshot(normalizedUrl);
+
+        // If PageSpeed lacks resource lists, run a Playwright HAR capture to fill waterfall/largest resources
+        const missingResources = !snapshot?.pageSpeed || ((snapshot.pageSpeed.largestResources || []).length === 0 && (snapshot.pageSpeed.resourceWaterfall || []).length === 0);
+        if (missingResources) {
+            try {
+                const playResult = await captureWithPlaywright(normalizedUrl);
+                snapshot.pageSpeed = { ...(snapshot.pageSpeed || {}), ...(playResult || {}) };
+                snapshot.desktopMetrics = snapshot.desktopMetrics || {};
+                if (playResult.largestResources && playResult.largestResources.length) {
+                    snapshot.desktopMetrics.largestResources = playResult.largestResources;
+                    snapshot.desktopMetrics.largestResourcesCount = playResult.largestResourcesCount || playResult.largestResources.length;
+                }
+                if (playResult.resourceWaterfall && playResult.resourceWaterfall.length) {
+                    snapshot.desktopMetrics.resourceWaterfall = playResult.resourceWaterfall;
+                    snapshot.desktopMetrics.waterfallItemsCount = playResult.waterfallItemsCount || playResult.resourceWaterfall.length;
+                }
+                if (playResult.renderBlockingResources && playResult.renderBlockingResources.length) {
+                    snapshot.desktopMetrics.renderBlockingResources = playResult.renderBlockingResources;
+                    snapshot.desktopMetrics.renderBlockingCount = playResult.renderBlockingCount || playResult.renderBlockingResources.length;
+                }
+
+                // Persist a MonitorHistory record containing this enriched snapshot
+                try {
+                    const perfDoc = new MonitorHistory({ url: normalizedUrl, performanceData: JSON.stringify(snapshot), checkedAt: new Date() });
+                    await perfDoc.save();
+                } catch (e) {
+                    // ignore persistence errors
+                }
+            } catch (err) {
+                // ignore Playwright capture failures and fall back to existing snapshot
+            }
+        }
 
         return res.status(200).json({
             success: true,
@@ -224,6 +257,27 @@ const getPerformanceMobileUsabilityController = async (req, res) => {
     }
 };
 
+    const captureHarController = async (req, res) => {
+        try {
+            const normalizedUrl = getUrl(req);
+            if (!normalizedUrl) return res.status(400).json({ success: false, message: 'URL is required' });
+
+            const result = await captureWithPlaywright(normalizedUrl);
+
+            // Optionally persist into MonitorHistory for later retrieval
+            try {
+                const perfDoc = new MonitorHistory({ url: normalizedUrl, performanceData: JSON.stringify({ pageSpeed: result, desktopMetrics: { pageSizeKb: result.pageSizeKb || 0 }, timestamp: new Date() }), checkedAt: new Date() });
+                await perfDoc.save();
+            } catch (e) {
+                // ignore persistence errors
+            }
+
+            return res.status(200).json({ success: true, data: result });
+        } catch (error) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    };
+
 module.exports = {
     analyzePerformanceController,
     getLatestPerformanceController,
@@ -234,5 +288,6 @@ module.exports = {
     getPerformanceResourcesController,
     getPerformanceWaterfallController,
     getPerformanceRegressionsController,
-    getPerformanceMobileUsabilityController
+    getPerformanceMobileUsabilityController,
+    captureHarController
 };

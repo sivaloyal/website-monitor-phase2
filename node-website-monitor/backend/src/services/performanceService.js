@@ -71,7 +71,7 @@ const deriveScoreFromContext = (context) => {
     return Math.max(10, score);
 };
 
-const buildPerformanceSnapshot = (payload, url, context = {}) => {
+const buildPerformanceSnapshot = async (payload, url, context = {}) => {
     const monitoringFrequency = normalizeMonitoringFrequency(context.monitoringFrequency || context.monitoring_frequency || '1h');
     const desktop = payload.desktop?.lighthouseResult || payload.desktop || {};
     const mobile = payload.mobile?.lighthouseResult || payload.mobile || {};
@@ -172,21 +172,112 @@ const buildPerformanceSnapshot = (payload, url, context = {}) => {
         networkProfile: lowEndDeviceSimulation.networkProfile
     };
 
+    // Helper to find available audit details items from multiple possible audit keys
+    const getAuditItems = (audits, keys) => {
+        for (const key of keys) {
+            const a = audits[key];
+            if (!a) continue;
+            const details = a.details || {};
+            if (Array.isArray(details.items) && details.items.length > 0) return details.items;
+            // Some audits nest arrays differently (e.g., chainedRequests)
+            if (Array.isArray(details.chainedRequests) && details.chainedRequests.length > 0) return details.chainedRequests;
+        }
+        return [];
+    };
+
+    // Try several audit keys to robustly extract network requests and resource summaries
+    const resourceItems = getAuditItems(desktopAudits, ["resource-summary", "network-requests", "network-requests-data", "network-requests-list", "network-requests-v2"])
+        .map((item) => ({ url: item.url || item.request?.url || item.resourceType || 'unknown', transferSize: item.transferSize || item.transfer_size || item.transferBytes || 0, resourceType: item.resourceType || item.mimeType || 'resource' }));
+
+    // If no resource items from resource-summary, try parsing top-level network logs
+    if (resourceItems.length === 0) {
+        const alt = getAuditItems(desktopAudits, ["network-requests", "networkRecords", "requests", "network-log"]);
+        for (const it of alt) {
+            const url = it.url || it.request?.url || it.name || it.resource || 'unknown';
+            const size = it.transferSize || it.size || it.transfer_size || 0;
+            resourceItems.push({ url, transferSize: size, resourceType: it.resourceType || it.mimeType || 'resource' });
+        }
+
+        // If still empty, try to extract resource URLs from provided HTML and probe their sizes
+        if (resourceItems.length === 0 && context && context.html) {
+            try {
+                const html = String(context.html || '');
+                const urlMatches = Array.from(html.matchAll(/(?:src|href)=["']([^"']+)["']/gi)).map(m => m[1]).filter(Boolean);
+                const unique = Array.from(new Set(urlMatches)).slice(0, 20);
+                const absolute = unique.map(u => {
+                    try {
+                        if (u.startsWith('http')) return u;
+                        const base = new URL(url);
+                        return new URL(u, base).toString();
+                    } catch (e) {
+                        return u;
+                    }
+                });
+
+                const headRequests = absolute.slice(0, 10).map(async (u) => {
+                    try {
+                        const resp = await axios.head(u, { timeout: 3500, maxRedirects: 2 });
+                        const len = Number(resp.headers['content-length'] || resp.headers['Content-Length'] || 0) || 0;
+                        return { url: u, transferSize: len, resourceType: (u.split('.').pop() || 'resource') };
+                    } catch (e) {
+                        return { url: u, transferSize: 0, resourceType: (u.split('.').pop() || 'resource') };
+                    }
+                });
+
+                const results = await Promise.allSettled(headRequests);
+                for (const r of results) {
+                    if (r.status === 'fulfilled' && r.value) resourceItems.push(r.value);
+                }
+            } catch (e) {
+                // ignore HTML extraction errors
+            }
+        }
+    }
+
+    // Build largest resources sorted by transfer size
+    const largestResourcesList = [...(resourceItems || [])].sort((a, b) => (b.transferSize || 0) - (a.transferSize || 0)).slice(0, 5).map(r => ({ resourceType: r.resourceType, transferSize: r.transferSize, url: r.url }));
+
+    // Render blocking resources fallback: look for specific audits or any request flagged as blocking
+    const renderBlockingItems = getAuditItems(desktopAudits, ["render-blocking-resources", "renderBlockingResources", "render-blocking"]).map(i => ({ url: i.url || i.request?.url || 'unknown', resourceType: i.resourceType || 'script' }));
+
+    // Critical request chains fallback
+    const criticalChains = (desktopAudits["critical-request-chains"]?.details?.chainedRequests || getAuditItems(desktopAudits, ["critical-request-chains", "critical-chains"]).slice(0,5)).map((item) => ({ url: item.request?.url || item.url || 'unknown' }));
+
     const pageSpeed = {
         pageLoadTime: normalizeMetric(
             context.loadTimeMs !== undefined && context.loadTimeMs !== null && context.loadTimeMs !== ""
                 ? toDisplayValue(Number(context.loadTimeMs) / 1000, "s", 1)
-                : getAuditValue(desktopAudits, ["interactive"], null),
+                : getAuditValue(desktopAudits, ["interactive", "speed-index", "first-contentful-paint"], null),
             null
         ),
-        resourceWaterfall: (desktopAudits["resource-summary"]?.details?.items || []).slice(0, 8).map((item) => ({ resourceType: item.resourceType || "resource", transferSize: item.transferSize || 0, url: item.url || item.resourceType || 'unknown' })),
-        largestResources: desktopMetrics.largestResources,
+        resourceWaterfall: (resourceItems || []).slice(0, 12).map((item) => ({ resourceType: item.resourceType || "resource", transferSize: item.transferSize || 0, url: item.url || 'unknown' })),
+        largestResources: largestResourcesList,
         imageOptimization: desktopMetrics.imageOptimization,
-        renderBlockingResources: (desktopAudits["render-blocking-resources"]?.details?.items || []).slice(0, 5).map((item) => ({ url: item.url || "unknown", resourceType: item.resourceType || "script" })),
-        criticalRequestChain: (desktopAudits["critical-request-chains"]?.details?.chainedRequests || []).slice(0, 5).map((item) => ({ url: item.request?.url || "unknown" })),
+        renderBlockingResources: renderBlockingItems.slice(0, 8),
+        criticalRequestChain: (criticalChains || []).slice(0, 8),
         unusedCss: (desktopAudits["unused-css-rules"]?.details?.items || []).slice(0, 5).map((item) => ({ url: item.url || "unknown" })),
         unusedJavaScript: (desktopAudits["unused-javascript"]?.details?.items || []).slice(0, 5).map((item) => ({ url: item.url || "unknown" }))
     };
+
+    // Mirror useful pageSpeed lists back onto desktopMetrics so other parts of the app
+    // (monitorService, controllers) can pick them up consistently when pageSpeed arrays
+    // are available from the snapshot.
+    if (largestResourcesList && largestResourcesList.length > 0) {
+        desktopMetrics.largestResources = largestResourcesList;
+        desktopMetrics.largestResourcesCount = largestResourcesList.length;
+    }
+    if (resourceItems && resourceItems.length > 0) {
+        desktopMetrics.resourceWaterfall = resourceItems.slice(0, 24).map(i => ({ url: i.url, resourceType: i.resourceType, transferSize: i.transferSize }));
+        desktopMetrics.waterfallItemsCount = desktopMetrics.resourceWaterfall.length;
+    }
+    if (renderBlockingItems && renderBlockingItems.length > 0) {
+        desktopMetrics.renderBlockingResources = renderBlockingItems;
+        desktopMetrics.renderBlockingCount = renderBlockingItems.length;
+    }
+    if (criticalChains && criticalChains.length > 0) {
+        desktopMetrics.criticalRequestChain = criticalChains;
+        desktopMetrics.criticalRequestChainsCount = criticalChains.length;
+    }
 
     return {
         url,
@@ -219,7 +310,7 @@ const analyzePerformance = async (url, strategy = "desktop", context = {}) => {
             desktop: strategy === "desktop" ? await fetchPageSpeedData(url, "desktop") : null,
             mobile: strategy === "mobile" ? await fetchPageSpeedData(url, "mobile") : null
         };
-        return buildPerformanceSnapshot(payload, url, context);
+        return await buildPerformanceSnapshot(payload, url, context);
     } catch (error) {
         throw new Error(
             error.response?.data?.error?.message ||
@@ -236,7 +327,7 @@ const analyzePerformanceSnapshot = async (url, context = {}) => {
             fetchPageSpeedData(url, "mobile")
         ]);
 
-        return buildPerformanceSnapshot({ desktop: desktopData, mobile: mobileData }, url, context);
+        return await buildPerformanceSnapshot({ desktop: desktopData, mobile: mobileData }, url, context);
     } catch (error) {
         throw new Error(
             error.response?.data?.error?.message ||

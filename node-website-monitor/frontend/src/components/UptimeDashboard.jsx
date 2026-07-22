@@ -39,9 +39,7 @@ const formatPerfValue = (value, unit = '') => {
 
   const numericValue = typeof value === 'string' ? parseFloat(value) : value;
   if (Number.isNaN(numericValue)) return String(value);
-
-  if (numericValue === 0) return 'N/A';
-
+  // Zero is a valid metric (counts or exact zero); only treat null/undefined/empty as N/A.
   return unit ? `${numericValue}${unit}` : `${numericValue}`;
 };
 
@@ -96,6 +94,31 @@ export default function UptimeDashboard({ stats, isSocketConnected, onNavigateTo
   const getDesktopMetric = (key) => desktopMetrics?.[key] ?? perf?.[key] ?? null;
   const getMobileMetric = (key) => mobileMetrics?.[key] ?? null;
   const pageSpeedImageOpportunities = pageSpeed?.imageOptimization ? Object.entries(pageSpeed.imageOptimization).filter(([_, value]) => !!value).length : 0;
+  // Prefer pageSpeed lists, fall back to desktopMetrics-derived values when missing
+  const psResourceWaterfall = Array.isArray(pageSpeed.resourceWaterfall) && pageSpeed.resourceWaterfall.length > 0
+    ? pageSpeed.resourceWaterfall
+    : Array.isArray(desktopMetrics.resourceWaterfall) && desktopMetrics.resourceWaterfall.length > 0
+      ? desktopMetrics.resourceWaterfall
+      : [];
+  const waterfallCount = (Array.isArray(psResourceWaterfall) && psResourceWaterfall.length) || desktopMetrics.waterfallItemsCount || pageSpeed.waterfallItemsCount || desktopMetrics.resourceCount || 0;
+  const psLargestResources = Array.isArray(pageSpeed.largestResources) && pageSpeed.largestResources.length > 0
+    ? pageSpeed.largestResources
+    : Array.isArray(desktopMetrics.largestResources) && desktopMetrics.largestResources.length > 0
+      ? desktopMetrics.largestResources
+      : [];
+  const largestResourcesCount = (Array.isArray(psLargestResources) && psLargestResources.length) || desktopMetrics.largestResourcesCount || pageSpeed.largestResourcesCount || 0;
+  const psRenderBlocking = Array.isArray(pageSpeed.renderBlockingResources) && pageSpeed.renderBlockingResources.length > 0
+    ? pageSpeed.renderBlockingResources
+    : Array.isArray(desktopMetrics.renderBlockingResources) && desktopMetrics.renderBlockingResources.length > 0
+      ? desktopMetrics.renderBlockingResources
+      : [];
+  const renderBlockingCount = (Array.isArray(psRenderBlocking) && psRenderBlocking.length) || desktopMetrics.renderBlockingCount || pageSpeed.renderBlockingCount || 0;
+  const psCriticalChains = Array.isArray(pageSpeed.criticalRequestChain) && pageSpeed.criticalRequestChain.length > 0
+    ? pageSpeed.criticalRequestChain
+    : Array.isArray(desktopMetrics.criticalRequestChain) && desktopMetrics.criticalRequestChain.length > 0
+      ? desktopMetrics.criticalRequestChain
+      : [];
+  const criticalRequestChainsCount = (Array.isArray(psCriticalChains) && psCriticalChains.length) || desktopMetrics.criticalRequestChainsCount || pageSpeed.criticalRequestChainsCount || 0;
 
   const [waterfall, setWaterfall] = useState([]);
   const [trendPoints, setTrendPoints] = useState([]);
@@ -710,8 +733,8 @@ export default function UptimeDashboard({ stats, isSocketConnected, onNavigateTo
                     <span className="text-[10px] uppercase tracking-wider text-slate-500">Top resources</span>
                   </div>
                   <div className="space-y-2 text-sm max-h-48 overflow-y-auto">
-                    {waterfall && waterfall.length > 0 ? (
-                      waterfall.map((r, idx) => (
+                    {(waterfall && waterfall.length > 0 ? waterfall : psResourceWaterfall).length > 0 ? (
+                      (waterfall && waterfall.length > 0 ? waterfall : psResourceWaterfall).map((r, idx) => (
                         <div key={idx} className="flex items-center justify-between rounded-lg bg-slate-900/40 px-3 py-2">
                           <div className="truncate pr-4"><span className="text-slate-400 text-xs mr-2">{r.resourceType || 'resource'}</span> <span className="text-slate-300 text-sm truncate">{r.url || r.name || 'unknown'}</span></div>
                           <div className="text-right">
@@ -720,7 +743,7 @@ export default function UptimeDashboard({ stats, isSocketConnected, onNavigateTo
                         </div>
                       ))
                     ) : (
-                      <div className="text-slate-500 text-xs">No waterfall resources available.</div>
+                      <div className="text-slate-500 text-xs">No waterfall resources available. ({waterfallCount} resources detected)</div>
                     )}
                   </div>
                 </div>
@@ -951,7 +974,7 @@ if (
                       ['FCP', getDesktopMetric('fcp'), 's'],
                       ['INP', getDesktopMetric('inp'), 'ms'],
                       ['TBT', getDesktopMetric('tbt'), 'ms'],
-                      ['TTI', getDesktopMetric('tti'), 's'],
+                      ['TTI', getDesktopMetric('tti') ?? pageSpeed?.pageLoadTime ?? null, 's'],
                       ['Speed Index', getDesktopMetric('speedIndex'), 's'],
                       ['TTFB', getDesktopMetric('ttfb'), 'ms'],
                     ].map(([label, value, unit]) => (
@@ -975,7 +998,7 @@ if (
                       ['Mobile INP', getMobileMetric('inp'), 'ms'],
                       ['Mobile CLS', getMobileMetric('cls'), ''],
                       ['Mobile TTFB', getMobileMetric('ttfb'), 'ms'],
-                      ['Mobile Usability', mobileUsability?.score, ''],
+                      ['Mobile Usability', mobileUsability?.score ?? mobileMetrics?.performanceScore ?? null, ''],
                     ].map(([label, value, unit]) => (
                       <div key={label} className="flex justify-between items-center rounded-lg bg-slate-900/50 px-3 py-2">
                         <span className="text-slate-400">{label}</span>
@@ -997,8 +1020,8 @@ if (
                     ['Mobile Speed Score', getMobileMetric('performanceScore'), ''],
                     ['Page Load Time', pageSpeed?.pageLoadTime, ''],
                     ['TTFB', getDesktopMetric('ttfb'), 'ms'],
-                    ['Largest resources', Array.isArray(pageSpeed?.largestResources) ? pageSpeed.largestResources.length : 0, ''],
-                    ['Waterfall items', Array.isArray(pageSpeed?.resourceWaterfall) ? pageSpeed.resourceWaterfall.length : 0, ''],
+                    ['Largest resources', largestResourcesCount, ''],
+                    ['Waterfall items', waterfallCount, ''],
                     ['Image optimization', pageSpeedImageOpportunities, 'flags'],
                     ['Responsive validation', responsiveValidation?.horizontalOverflow || responsiveValidation?.viewportProblems || responsiveValidation?.touchTargetIssues || responsiveValidation?.fontScalingProblems ? 'Issues' : 'Clear', ''],
                   ].map(([label, value, unit]) => (
@@ -1055,15 +1078,15 @@ if (
                   <div className="space-y-3 text-sm">
                     <div className="flex justify-between rounded-lg bg-slate-900/50 px-3 py-2">
                       <span className="text-slate-400">Largest resources</span>
-                      <span className="font-semibold text-slate-300">{Array.isArray(pageSpeed?.largestResources) ? pageSpeed.largestResources.length : 0}</span>
+                      <span className="font-semibold text-slate-300">{formatPerfValue(largestResourcesCount)}</span>
                     </div>
                     <div className="flex justify-between rounded-lg bg-slate-900/50 px-3 py-2">
                       <span className="text-slate-400">Render-blocking resources</span>
-                      <span className="font-semibold text-slate-300">{Array.isArray(pageSpeed?.renderBlockingResources) ? pageSpeed.renderBlockingResources.length : 0}</span>
+                      <span className="font-semibold text-slate-300">{formatPerfValue(renderBlockingCount)}</span>
                     </div>
                     <div className="flex justify-between rounded-lg bg-slate-900/50 px-3 py-2">
                       <span className="text-slate-400">Critical request chains</span>
-                      <span className="font-semibold text-slate-300">{Array.isArray(pageSpeed?.criticalRequestChain) ? pageSpeed.criticalRequestChain.length : 0}</span>
+                      <span className="font-semibold text-slate-300">{formatPerfValue(criticalRequestChainsCount)}</span>
                     </div>
                   </div>
                 </div>

@@ -83,6 +83,16 @@ router.get('/performance/resources', getPerformanceResourcesController);
 router.get('/performance/waterfall', getPerformanceWaterfallController);
 router.get('/performance/regressions', getPerformanceRegressionsController);
 router.get('/performance/mobile-usability', getPerformanceMobileUsabilityController);
+router.post('/performance/capture-har', async (req, res) => {
+  const { url } = req.body || req.query;
+  if (!url) return res.status(400).json({ success: false, message: 'URL is required' });
+  try {
+    const { captureHarController } = require('../controllers/performanceController');
+    return await captureHarController({ body: { url } }, res);
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
 
 // ── Per-website email configuration (NEW) ────────────────────────────────────
 router.get('/email-config', async (req, res) => {

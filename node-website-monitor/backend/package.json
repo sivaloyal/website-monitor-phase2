@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
+    "capture-har": "node src/utils/harCaptureRunner.js",
     "postinstall": "cd .. && cd frontend && npm install && npm run build && cd ../backend"
   },
   "dependencies": {
@@ -19,6 +20,7 @@
     "socket.io": "^4.8.3"
   },
   "devDependencies": {
-    "nodemon": "^3.1.0"
+    "nodemon": "^3.1.0",
+    "playwright": "^1.44.0"
   }
 }
