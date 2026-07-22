@@ -1,5 +1,7 @@
 const axios = require('axios');
 const dns = require('dns').promises;
+const fs = require('fs');
+const path = require('path');
 const tls = require('tls');
 const net = require('net');
 const cron = require('node-cron');
@@ -11,6 +13,58 @@ const { analyzeUiUx } = require('./uiUxService');
 const { analyzePageStructure } = require('./pageAnalysisService');
 const { analyseMalware } = require('./malwareService');
 const { sendAlertEmail, sendAlertEmailToWebsite } = require('./emailService');
+const { analyzePerformanceSnapshot } = require('./performanceService');
+
+const settingsPath = path.join(__dirname, '../../../../sre_settings.json');
+
+const normalizeMonitoringFrequency = (value = '1h') => {
+  const raw = String(value || '').trim().toLowerCase();
+  if (['1h', 'hourly', 'hour'].includes(raw)) return '1h';
+  if (['3h', '3hour', '3-hour', '3 hours'].includes(raw)) return '3h';
+  if (['6h', '6hour', '6-hour', '6 hours'].includes(raw)) return '6h';
+  if (['12h', '12hour', '12-hour', '12 hours'].includes(raw)) return '12h';
+  if (['24h', 'daily', 'day', '1d', '24-hour', '24 hours'].includes(raw)) return '24h';
+  return '1h';
+};
+
+const getMonitoringFrequencyFromSettings = () => {
+  if (process.env.MONITOR_FREQUENCY) {
+    return normalizeMonitoringFrequency(process.env.MONITOR_FREQUENCY);
+  }
+
+  try {
+    if (fs.existsSync(settingsPath)) {
+      const raw = fs.readFileSync(settingsPath, 'utf8');
+      const data = JSON.parse(raw || '{}');
+      if (data.monitoringFrequency) {
+        return normalizeMonitoringFrequency(data.monitoringFrequency);
+      }
+    }
+  } catch (err) {
+    console.warn(`⚠️ Failed to read monitoringFrequency from settings: ${err.message}`);
+  }
+
+  return '1h';
+};
+
+const getCronExpressionForFrequency = (frequency) => {
+  const freq = normalizeMonitoringFrequency(frequency);
+  const mapping = {
+    '1h': '0 * * * *',
+    '3h': '0 */3 * * *',
+    '6h': '0 */6 * * *',
+    '12h': '0 */12 * * *',
+    '24h': '0 0 * * *'
+  };
+  return mapping[freq] || mapping['1h'];
+};
+
+const getMonitorCronExpression = () => {
+  if (process.env.MONITOR_CRON && String(process.env.MONITOR_CRON).trim() !== '') {
+    return String(process.env.MONITOR_CRON).trim();
+  }
+  return getCronExpressionForFrequency(getMonitoringFrequencyFromSettings());
+};
 
 /**
  * Socket-level WHOIS client on port 43 to retrieve exact domain registration expiry.
@@ -63,6 +117,7 @@ const calculateCoreWebVitals = (loadTimeMs, ttfbMs, pageSizeKb, totalNodes, unmi
   const inp = Math.round(25 + (ttfbMs * 0.12) + (totalNodes * 0.04));
   const tti = parseFloat((lcp + 0.4 + (unminifiedCount * 0.25)).toFixed(2));
   const speedIndex = parseFloat((fcp + 0.5 + (pageSizeKb * 0.0003)).toFixed(2));
+  const tbt = Math.round((ttfbMs * 0.18) + (unminifiedCount * 18));
   
   let score = 100;
   if (loadTimeMs > 2000) score -= 20;
@@ -81,11 +136,19 @@ const calculateCoreWebVitals = (loadTimeMs, ttfbMs, pageSizeKb, totalNodes, unmi
   return {
     performanceScore: score,
     grade,
-    vitals: { fcp, lcp, cls, fid, inp, tti, speedIndex },
+
+    fcp: `${fcp} s`,
+    lcp: `${lcp} s`,
+    cls,
+    inp: `${inp} ms`,
+    tbt: `${tbt} ms`,
+    speedIndex: `${speedIndex} s`,
+    ttfb: `${ttfbMs} ms`,
+
     pageSizeKb,
     totalNodes,
     unminifiedCount
-  };
+};
 };
 
 /**
@@ -380,13 +443,58 @@ const checkWebsiteStatus = async (url) => {
   auditReport.uiUxData = JSON.stringify(uiUx);
 
   // 8. Performance Core Web Vitals mapping
-  // Parse dynamic total DOM elements count and scripts sizes from raw markup
+  // Parse dynamic total DOM elements count and resource size from raw markup
   const totalNodes = (htmlContent.match(/<[a-zA-Z0-9_-]+/g) || []).length || 245;
   const scriptCount = (htmlContent.match(/<script/g) || []).length || 8;
   const pageSizeKb = Math.round(htmlContent.length / 1024) || 85;
+  const monitoringFrequency = getMonitoringFrequencyFromSettings();
 
-  const perf = calculateCoreWebVitals(auditReport.loadTimeMs, auditReport.ttfbMs, pageSizeKb, totalNodes, scriptCount);
+  let perf = null;
+  let perfSnapshotError = null;
+  try {
+    perf = await analyzePerformanceSnapshot(url, {
+      loadTimeMs: auditReport.loadTimeMs,
+      ttfbMs: auditReport.ttfbMs,
+      pageSizeKb,
+      totalNodes,
+      unminifiedCount: scriptCount,
+      monitoringFrequency
+    });
+  } catch (err) {
+    perfSnapshotError = err.message;
+    perf = calculateCoreWebVitals(
+      auditReport.loadTimeMs,
+      auditReport.ttfbMs,
+      pageSizeKb,
+      totalNodes,
+      scriptCount
+    );
+  }
+
+  if (!perf) {
+    perf = calculateCoreWebVitals(
+      auditReport.loadTimeMs,
+      auditReport.ttfbMs,
+      pageSizeKb,
+      totalNodes,
+      scriptCount
+    );
+  }
+
+  if (perfSnapshotError) {
+    auditReport.errors.push(`Performance snapshot fallback used: ${perfSnapshotError}`);
+  }
+
   auditReport.performanceData = JSON.stringify(perf);
+  auditReport.desktopMetrics = perf.desktopMetrics || {};
+  auditReport.mobileMetrics = perf.mobileMetrics || {};
+  auditReport.pageSpeed = perf.pageSpeed || {};
+  auditReport.responsiveValidation = perf.responsiveValidation || {};
+  auditReport.lowEndDeviceSimulation = perf.lowEndDeviceSimulation || {};
+  auditReport.mobileUsability = perf.mobileUsability || {};
+  auditReport.monitoringFrequency = perf.monitoringFrequency || monitoringFrequency;
+  auditReport.performanceScore = perf.performanceScore;
+  auditReport.regressionSignals = perf.regressionSignals || [];
 
   // 9. Page Structure & Technology Stack Analysis
   let pageAnalysis = { pageCount: { estimatedPages: 1, source: 'fallback', confidence: 'low' }, techStack: [] };
@@ -532,7 +640,7 @@ const compileStats = async (url) => {
  * Initialize 24/7 cron-driven audit loops with websocket broadcast channel.
  */
 const startUptimeScheduler = (io) => {
-  const cronExpression = process.env.MONITOR_CRON || '*/5 * * * *';
+  const cronExpression = getMonitorCronExpression();
   const monitorUrl = process.env.DEFAULT_MONITOR_URL || 'https://wordpress.org';
 
   console.log(`⏱️ Uptime cron scheduler initialized [Cron: "${cronExpression}"] targeting url: ${monitorUrl}`);

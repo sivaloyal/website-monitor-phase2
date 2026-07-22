@@ -3,6 +3,7 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const http = require('http');
 const path = require('path');
+const fs = require('fs');
 const { Server } = require('socket.io');
 const connectDB = require('./config/db');
 const apiRoutes = require('./routes/api');
@@ -32,8 +33,23 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// Serve compiled React static portal assets
-app.use(express.static(path.join(__dirname, 'public')));
+// Serve compiled React static portal assets (prefer frontend/build when available)
+const frontendBuildPath = path.join(__dirname, '..', '..', 'frontend', 'build');
+const frontendDistPath = path.join(__dirname, '..', '..', 'frontend', 'dist');
+const backendPublicPath = path.join(__dirname, 'public');
+
+if (fs.existsSync(frontendBuildPath)) {
+  console.log('📦 Serving frontend build from:', frontendBuildPath);
+  app.use(express.static(frontendBuildPath));
+} else if (fs.existsSync(frontendDistPath)) {
+  console.log('📦 Serving frontend dist assets from:', frontendDistPath);
+  app.use(express.static(frontendDistPath));
+} else if (fs.existsSync(backendPublicPath)) {
+  console.log('📦 Serving backend public assets from:', backendPublicPath);
+  app.use(express.static(backendPublicPath));
+} else {
+  console.log('⚠️ No static assets found for client UI (frontend/build, frontend/dist or backend/src/public)');
+}
 
 // Bind API routing
 app.use('/api', apiRoutes);
@@ -41,7 +57,14 @@ app.use('/api', apiRoutes);
 // Wildcard catch-all redirect to client routing
 app.get('*', (req, res, next) => {
   if (req.url.startsWith('/api')) return next();
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  // Prefer frontend build/index.html when available
+  const indexFromFrontend = path.join(frontendBuildPath, 'index.html');
+  const indexFromDist = path.join(frontendDistPath, 'index.html');
+  const indexFromBackend = path.join(backendPublicPath, 'index.html');
+  if (fs.existsSync(indexFromFrontend)) return res.sendFile(indexFromFrontend);
+  if (fs.existsSync(indexFromDist)) return res.sendFile(indexFromDist);
+  if (fs.existsSync(indexFromBackend)) return res.sendFile(indexFromBackend);
+  return res.status(404).send('Client UI not built. Run `npm run build` in the frontend folder.');
 });
 
 // Seed mock dummy data to ensure an amazing out-of-the-box experience

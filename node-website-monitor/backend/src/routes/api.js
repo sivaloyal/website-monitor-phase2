@@ -16,6 +16,18 @@ const {
 const {
   getDomainProfileController
 } = require('../controllers/domainController');
+const {
+  analyzePerformanceController,
+  getLatestPerformanceController,
+  getPerformanceHistoryController,
+  getPerformanceMobileController,
+  getPerformanceDesktopController,
+  getPerformanceTrendsController,
+  getPerformanceResourcesController,
+  getPerformanceWaterfallController,
+  getPerformanceRegressionsController,
+  getPerformanceMobileUsabilityController
+} = require('../controllers/performanceController');
 
 // Immediate Site Audit Trigger
 router.post('/audit', triggerAudit);
@@ -59,6 +71,18 @@ router.post('/send-test-email/', testEmail);
 
 // Domain monitoring profile
 router.post('/domain/profile', getDomainProfileController);
+//performance monitoring
+// Performance Monitoring
+router.post('/performance/analyze', analyzePerformanceController);
+router.get('/performance/latest', getLatestPerformanceController);
+router.get('/performance/history', getPerformanceHistoryController);
+router.get('/performance/mobile', getPerformanceMobileController);
+router.get('/performance/desktop', getPerformanceDesktopController);
+router.get('/performance/trends', getPerformanceTrendsController);
+router.get('/performance/resources', getPerformanceResourcesController);
+router.get('/performance/waterfall', getPerformanceWaterfallController);
+router.get('/performance/regressions', getPerformanceRegressionsController);
+router.get('/performance/mobile-usability', getPerformanceMobileUsabilityController);
 
 // ── Per-website email configuration (NEW) ────────────────────────────────────
 router.get('/email-config', async (req, res) => {

@@ -4,6 +4,16 @@ const path = require('path');
 const settingsPath = path.join(__dirname, '../../../../sre_settings.json');
 const emailLogPath = path.join(__dirname, '../../../email_delivery.log');
 
+const normalizeMonitoringFrequency = (value = '1h') => {
+  const raw = String(value || '').trim().toLowerCase();
+  if (['1h', 'hourly', 'hour'].includes(raw)) return '1h';
+  if (['3h', '3hour', '3-hour', '3 hours'].includes(raw)) return '3h';
+  if (['6h', '6hour', '6-hour', '6 hours'].includes(raw)) return '6h';
+  if (['12h', '12hour', '12-hour', '12 hours'].includes(raw)) return '12h';
+  if (['24h', 'daily', 'day', '1d', '24-hour', '24 hours'].includes(raw)) return '24h';
+  return '1h';
+};
+
 /**
  * Get SRE Settings & Email Delivery logs
  */
@@ -15,7 +25,8 @@ const getSettings = async (req, res) => {
     email_host_user: '',
     email_host_password: '',
     alert_email_recipients: '',
-    alerts_enabled: true
+    alerts_enabled: true,
+    monitoringFrequency: '1h'
   };
 
   // Read sre_settings.json
@@ -23,6 +34,10 @@ const getSettings = async (req, res) => {
     if (fs.existsSync(settingsPath)) {
       const data = fs.readFileSync(settingsPath, 'utf8');
       settings = { ...settings, ...JSON.parse(data) };
+      // Normalize monitoring cadence for frontend display
+      if (settings.monitoringFrequency) {
+        settings.monitoringFrequency = normalizeMonitoringFrequency(settings.monitoringFrequency);
+      }
       // Default alerts_enabled to true if not specified
       if (settings.alerts_enabled === undefined) {
         settings.alerts_enabled = true;
@@ -95,6 +110,10 @@ const saveSettings = async (req, res) => {
     if (fs.existsSync(settingsPath)) {
       const data = fs.readFileSync(settingsPath, 'utf8');
       settings = JSON.parse(data);
+    }
+
+    if (newSettings.monitoringFrequency) {
+      newSettings.monitoringFrequency = normalizeMonitoringFrequency(newSettings.monitoringFrequency);
     }
 
     // Merge settings
