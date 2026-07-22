@@ -129,7 +129,8 @@ const seedDummyData = async () => {
           pageSpeed: {},
           responsiveValidation: {},
           lowEndDeviceSimulation: {},
-          mobileUsability: {},
+          // Provide a usability score so the frontend can render a value
+          mobileUsability: { score: Math.floor(70 + Math.random() * 20) },
           timestamp: time.toISOString()
         };
 

@@ -616,6 +616,13 @@ const compileStats = async (url) => {
     const doc = h.toObject ? h.toObject() : { ...h };
     doc.seo = parseJsonSafe(doc.seoData);
     doc.performance = parseJsonSafe(doc.performanceData);
+    // Merge desktopMetrics and mobileMetrics into performance object
+    if (doc.desktopMetrics) {
+      doc.performance.desktopMetrics = doc.desktopMetrics;
+    }
+    if (doc.mobileMetrics) {
+      doc.performance.mobileMetrics = doc.mobileMetrics;
+    }
     doc.uiUx = parseJsonSafe(doc.uiUxData);
     doc.security = parseJsonSafe(doc.securityData);
     doc.pageAnalysis = parseJsonSafe(doc.pageAnalysisData);
