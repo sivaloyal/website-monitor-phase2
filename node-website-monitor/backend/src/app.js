@@ -84,6 +84,73 @@ const seedDummyData = async () => {
         const time = new Date(now - i * 60 * 60 * 1000);
         const isUp = i === 12 ? false : true; // Introduce a downtime event 12 hours ago
         
+        // Create performance metrics
+        const desktopMetrics = isUp ? {
+          performanceScore: Math.floor(60 + Math.random() * 40),
+          lcp: `${(1.5 + Math.random() * 1).toFixed(2)} s`,
+          fcp: `${(0.5 + Math.random() * 0.5).toFixed(2)} s`,
+          inp: `${Math.floor(50 + Math.random() * 100)} ms`,
+          cls: (0.05 + Math.random() * 0.2).toFixed(3),
+          tbt: `${Math.floor(100 + Math.random() * 200)} ms`,
+          speedIndex: `${(1 + Math.random() * 1.5).toFixed(2)} s`,
+          ttfb: `${Math.floor(200 + Math.random() * 400)} ms`,
+          accessibilityScore: Math.floor(80 + Math.random() * 20),
+          bestPracticesScore: Math.floor(75 + Math.random() * 25),
+          seoScore: Math.floor(85 + Math.random() * 15),
+          securityScore: 100,
+          uiHealthScore: Math.floor(80 + Math.random() * 20),
+          pageSizeKb: Math.floor(500 + Math.random() * 1500),
+          resourceCount: Math.floor(30 + Math.random() * 70)
+        } : {};
+
+        const mobileMetrics = isUp ? {
+          performanceScore: Math.floor(50 + Math.random() * 40),
+          lcp: `${(2 + Math.random() * 2).toFixed(2)} s`,
+          fcp: `${(1 + Math.random() * 1).toFixed(2)} s`,
+          inp: `${Math.floor(80 + Math.random() * 150)} ms`,
+          cls: (0.08 + Math.random() * 0.25).toFixed(3),
+          tbt: `${Math.floor(150 + Math.random() * 250)} ms`,
+          speedIndex: `${(1.5 + Math.random() * 2).toFixed(2)} s`,
+          ttfb: `${Math.floor(300 + Math.random() * 500)} ms`,
+          accessibilityScore: Math.floor(75 + Math.random() * 25),
+          bestPracticesScore: Math.floor(70 + Math.random() * 30),
+          seoScore: Math.floor(80 + Math.random() * 20),
+          securityScore: 100,
+          uiHealthScore: Math.floor(75 + Math.random() * 25),
+          pageSizeKb: Math.floor(400 + Math.random() * 1200),
+          resourceCount: Math.floor(25 + Math.random() * 60)
+        } : {};
+
+        const performanceData = {
+          url: targetUrl,
+          desktopMetrics,
+          mobileMetrics,
+          performanceScore: desktopMetrics.performanceScore || 70,
+          pageSpeed: {},
+          responsiveValidation: {},
+          lowEndDeviceSimulation: {},
+          mobileUsability: {},
+          timestamp: time.toISOString()
+        };
+
+        const seoData = {
+          seoScore: Math.floor(80 + Math.random() * 20),
+          title: { text: 'WordPress.org: Blog Tool, Publishing Platform, and CMS', status: 'ok', message: 'Title tag is present' },
+          metaDescription: { text: 'WordPress description here', status: 'ok', message: 'Meta description is present' },
+          alerts: []
+        };
+
+        const securityData = {
+          securityScore: 90,
+          headers: { missing: [], csp: 'enabled', hsts: 'enabled', xfo: 'enabled' },
+          alerts: []
+        };
+
+        const uiUxData = {
+          uiHealthScore: Math.floor(80 + Math.random() * 20),
+          alerts: []
+        };
+        
         mockHistory.push({
           url: targetUrl,
           isUp,
@@ -98,6 +165,12 @@ const seedDummyData = async () => {
             expiryDate: new Date(now + 18 * 24 * 60 * 60 * 1000)
           },
           errors: isUp ? [] : ['Service Unavailable (503)'],
+          performanceData: JSON.stringify(performanceData),
+          desktopMetrics,
+          mobileMetrics,
+          seoData: JSON.stringify(seoData),
+          securityData: JSON.stringify(securityData),
+          uiUxData: JSON.stringify(uiUxData),
           checkedAt: time
         });
       }
