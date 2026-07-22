@@ -4,7 +4,7 @@ services:
     env: node
     region: oregon
     plan: free
-    repo: https://github.com/<your-org-or-username>/monitor-website-main
+    repo: https://github.com/sivaloyal/website-monitor-phase2.git
     branch: main
     buildCommand: "cd node-website-monitor/backend && npm install"
     startCommand: "cd node-website-monitor/backend && npm start"
@@ -18,7 +18,7 @@ services:
     env: static
     region: oregon
     plan: free
-    repo: https://github.com/<your-org-or-username>/monitor-website-main
+    repo: https://github.com/sivaloyal/website-monitor-phase2.git
     branch: main
     buildCommand: "cd node-website-monitor/frontend && npm install && npm run build"
     staticPublishPath: node-website-monitor/frontend/build
