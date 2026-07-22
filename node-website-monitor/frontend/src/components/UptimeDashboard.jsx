@@ -17,7 +17,7 @@ const getPerfMetric = (perf, key, fallback = null) => {
     return perf[key];
   }
 
-  const nestedSources = [perf.vitals, perf.coreWebVitals, perf.metrics];
+  const nestedSources = [perf.desktopMetrics, perf.mobileMetrics, perf.vitals, perf.coreWebVitals, perf.metrics];
   for (const source of nestedSources) {
     if (source && typeof source === 'object') {
       const nestedValue = source[key];
