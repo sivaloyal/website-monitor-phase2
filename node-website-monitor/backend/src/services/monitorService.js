@@ -623,6 +623,29 @@ const compileStats = async (url) => {
     if (doc.mobileMetrics) {
       doc.performance.mobileMetrics = doc.mobileMetrics;
     }
+    // If performance object contains flat top-level metric fields (from some audits),
+    // normalize them into a `desktopMetrics` object so the frontend always finds a nested structure.
+    const perf = doc.performance || {};
+    const hasDesktop = perf.desktopMetrics && Object.keys(perf.desktopMetrics).length > 0;
+    const hasFlatMetrics = (perf.fcp || perf.lcp || perf.inp || perf.tbt || perf.speedIndex || perf.ttfB) || perf.performanceScore;
+    if (!hasDesktop && hasFlatMetrics) {
+      doc.performance.desktopMetrics = {
+        performanceScore: perf.performanceScore ?? null,
+        fcp: perf.fcp ?? null,
+        lcp: perf.lcp ?? null,
+        inp: perf.inp ?? null,
+        tbt: perf.tbt ?? null,
+        speedIndex: perf.speedIndex ?? null,
+        ttfb: perf.ttfb ?? null,
+        cls: perf.cls ?? null,
+        pageSizeKb: perf.pageSizeKb ?? perf.pageSize ?? null
+      };
+    }
+    // If mobile metrics are missing, mirror desktop metrics so the UI has values to show
+    const hasMobile = perf.mobileMetrics && Object.keys(perf.mobileMetrics).length > 0;
+    if (!hasMobile && doc.performance.desktopMetrics && Object.keys(doc.performance.desktopMetrics).length > 0) {
+      doc.performance.mobileMetrics = { ...doc.performance.desktopMetrics };
+    }
     doc.uiUx = parseJsonSafe(doc.uiUxData);
     doc.security = parseJsonSafe(doc.securityData);
     doc.pageAnalysis = parseJsonSafe(doc.pageAnalysisData);

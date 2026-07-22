@@ -31,10 +31,16 @@ const getPerfMetric = (perf, key, fallback = null) => {
 };
 
 const formatPerfValue = (value, unit = '') => {
-  if (value === null || value === undefined || value === '') return '—';
+  // Treat null/undefined/empty/zero as not-available to avoid showing dashes or meaningless zeros.
+  if (value === null || value === undefined || value === '' ) return 'N/A';
+
+  // If value is a string that already contains units, return it as-is
+  if (typeof value === 'string' && /[a-zA-Z]/.test(value)) return value;
 
   const numericValue = typeof value === 'string' ? parseFloat(value) : value;
   if (Number.isNaN(numericValue)) return String(value);
+
+  if (numericValue === 0) return 'N/A';
 
   return unit ? `${numericValue}${unit}` : `${numericValue}`;
 };
@@ -998,7 +1004,7 @@ if (
                   ].map(([label, value, unit]) => (
                     <div key={label} className="flex justify-between items-center rounded-lg bg-slate-900/50 px-3 py-2">
                       <span className="text-slate-400">{label}</span>
-                      <span className="font-semibold text-slate-200">{typeof value === 'number' ? `${value}${unit}` : value || '—'}</span>
+                      <span className="font-semibold text-slate-200">{formatPerfValue(value, unit)}</span>
                     </div>
                   ))}
                 </div>

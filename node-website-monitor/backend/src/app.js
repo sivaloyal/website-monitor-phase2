@@ -121,18 +121,59 @@ const seedDummyData = async () => {
           resourceCount: Math.floor(25 + Math.random() * 60)
         } : {};
 
+        // Add additional derived page and resource metrics so UI can display richer real-time values
+        if (isUp) {
+          // Time to Interactive and total page load time (ms)
+          desktopMetrics.tti = `${Math.floor(800 + Math.random() * 2200)} ms`;
+          desktopMetrics.pageLoadTime = `${Math.floor(900 + Math.random() * 5000)} ms`;
+          desktopMetrics.waterfallItemsCount = Math.floor(10 + Math.random() * 60);
+          desktopMetrics.largestResources = [
+            { url: '/assets/main.js', sizeKb: Math.floor(100 + Math.random() * 400) },
+            { url: '/assets/vendor.js', sizeKb: Math.floor(80 + Math.random() * 300) },
+            { url: '/images/hero.jpg', sizeKb: Math.floor(200 + Math.random() * 800) }
+          ];
+          desktopMetrics.largestResourcesCount = desktopMetrics.largestResources.length;
+          desktopMetrics.renderBlockingCount = Math.floor(0 + Math.random() * 4);
+          desktopMetrics.criticalRequestChainsCount = Math.floor(0 + Math.random() * 3);
+
+          mobileMetrics.tti = `${Math.floor(900 + Math.random() * 2600)} ms`;
+          mobileMetrics.pageLoadTime = `${Math.floor(1100 + Math.random() * 7000)} ms`;
+          mobileMetrics.waterfallItemsCount = Math.floor(8 + Math.random() * 50);
+          mobileMetrics.largestResources = [
+            { url: '/assets/mobile.js', sizeKb: Math.floor(60 + Math.random() * 240) },
+            { url: '/images/mobile-hero.jpg', sizeKb: Math.floor(150 + Math.random() * 600) }
+          ];
+          mobileMetrics.largestResourcesCount = mobileMetrics.largestResources.length;
+          mobileMetrics.renderBlockingCount = Math.floor(0 + Math.random() * 3);
+          mobileMetrics.criticalRequestChainsCount = Math.floor(0 + Math.random() * 2);
+        }
+
         const performanceData = {
           url: targetUrl,
           desktopMetrics,
           mobileMetrics,
           performanceScore: desktopMetrics.performanceScore || 70,
-          pageSpeed: {},
+          pageSpeed: {
+            pageLoadTime: desktopMetrics.pageLoadTime || null,
+            resourceWaterfall: desktopMetrics.waterfall || [],
+            largestResources: desktopMetrics.largestResources || [],
+            largestResourcesCount: desktopMetrics.largestResources ? desktopMetrics.largestResources.length : 0,
+            waterfallItemsCount: desktopMetrics.waterfallItemsCount || desktopMetrics.waterfallItemsCount || 0,
+            renderBlockingCount: desktopMetrics.renderBlockingCount || 0,
+            criticalRequestChainsCount: desktopMetrics.criticalRequestChainsCount || 0
+          },
           responsiveValidation: {},
           lowEndDeviceSimulation: {},
           // Provide a usability score so the frontend can render a value
           mobileUsability: { score: Math.floor(70 + Math.random() * 20) },
           timestamp: time.toISOString()
         };
+
+        // Ensure some fields used by the frontend exist at top-level for older records
+        desktopMetrics.totalNodes = desktopMetrics.totalNodes || Math.floor(200 + Math.random() * 900);
+        desktopMetrics.unminifiedCount = desktopMetrics.unminifiedCount || Math.floor(0 + Math.random() * 6);
+        mobileMetrics.totalNodes = mobileMetrics.totalNodes || Math.floor(150 + Math.random() * 700);
+        mobileMetrics.unminifiedCount = mobileMetrics.unminifiedCount || Math.floor(0 + Math.random() * 5);
 
         const seoData = {
           seoScore: Math.floor(80 + Math.random() * 20),
