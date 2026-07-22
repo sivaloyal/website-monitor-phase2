@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: website-monitor-backend
+    env: node
+    region: oregon
+    plan: free
+    repo: https://github.com/<your-org-or-username>/monitor-website-main
+    branch: main
+    buildCommand: "cd node-website-monitor/backend && npm install"
+    startCommand: "cd node-website-monitor/backend && npm start"
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+  - type: static
+    name: website-monitor-frontend
+    env: static
+    region: oregon
+    plan: free
+    repo: https://github.com/<your-org-or-username>/monitor-website-main
+    branch: main
+    buildCommand: "cd node-website-monitor/frontend && npm install && npm run build"
+    staticPublishPath: node-website-monitor/frontend/build
+    envVars: []

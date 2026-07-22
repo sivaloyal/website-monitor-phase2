@@ -5,7 +5,8 @@
   "main": "src/app.js",
   "scripts": {
     "start": "node src/app.js",
-    "dev": "nodemon src/app.js"
+    "dev": "nodemon src/app.js",
+    "postinstall": "cd .. && cd frontend && npm install && npm run build && cd ../backend"
   },
   "dependencies": {
     "axios": "^1.6.8",
