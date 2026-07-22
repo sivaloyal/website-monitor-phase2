@@ -19,6 +19,7 @@ export default function SettingsPanel({ showToast }) {
     email_host_password: '',
     alert_email_recipients: '',
     alerts_enabled: true,
+    monitoringFrequency: '1h',
     resend_api_key: '',
     resend_from_email: ''
   });
@@ -154,6 +155,29 @@ export default function SettingsPanel({ showToast }) {
             <div className="space-y-4 text-xs">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 
+                {/* Monitoring Cadence */}
+                <div className="space-y-2">
+                  <label className="text-slate-400 font-bold uppercase tracking-wider block text-[10px]">Audit cadence</label>
+                  <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                    {['1h','3h','6h','12h','24h'].map((option) => {
+                      const active = settings.monitoringFrequency === option;
+                      return (
+                        <button
+                          key={option}
+                          type="button"
+                          onClick={() => setSettings(prev => ({ ...prev, monitoringFrequency: option }))}
+                          className={`text-[11px] uppercase rounded-xl px-3 py-2 border transition-all ${active ? 'bg-indigo-500 text-slate-100 border-indigo-400' : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-indigo-500/60 hover:text-slate-100'}`}
+                        >
+                          {option}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[10px] text-slate-500 leading-normal mt-1.5 italic">
+                    Select the global monitoring cadence used by the uptime scheduler.
+                  </p>
+                </div>
+
                 {/* Gmail User */}
                 <div className="space-y-2">
                   <label className="text-slate-400 font-bold uppercase tracking-wider block text-[10px]">Gmail Username</label>

@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from 'recharts';
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import { ResponsiveContainer, AreaChart, Area, LineChart, Line, BarChart, Bar, Cell, PieChart, Pie, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from 'recharts';
 import { 
   Activity, ShieldCheck, ShieldAlert, Wifi, Globe, Database, FileText, 
   AlertTriangle, Download, Printer, CheckCircle2, XCircle, Clock, 
@@ -8,6 +9,35 @@ import {
 import SeoDashboard from './SeoDashboard';
 import SSLMonitor from './SSLMonitor';
 import AccessibilityAudit from './AccessibilityAudit';
+
+const getPerfMetric = (perf, key, fallback = null) => {
+  if (!perf || typeof perf !== 'object') return fallback;
+
+  if (perf[key] !== undefined && perf[key] !== null && perf[key] !== '') {
+    return perf[key];
+  }
+
+  const nestedSources = [perf.vitals, perf.coreWebVitals, perf.metrics];
+  for (const source of nestedSources) {
+    if (source && typeof source === 'object') {
+      const nestedValue = source[key];
+      if (nestedValue !== undefined && nestedValue !== null && nestedValue !== '') {
+        return nestedValue;
+      }
+    }
+  }
+
+  return fallback;
+};
+
+const formatPerfValue = (value, unit = '') => {
+  if (value === null || value === undefined || value === '') return '—';
+
+  const numericValue = typeof value === 'string' ? parseFloat(value) : value;
+  if (Number.isNaN(numericValue)) return String(value);
+
+  return unit ? `${numericValue}${unit}` : `${numericValue}`;
+};
 
 export default function UptimeDashboard({ stats, isSocketConnected, onNavigateToAlt }) {
   const [activeSubTab, setActiveSubTab] = useState('performance'); // performance, seo, ui_ux, security, history
@@ -31,7 +61,101 @@ export default function UptimeDashboard({ stats, isSocketConnected, onNavigateTo
     imageAnalysis = { totalImages: 0, withAlt: 0, missingAlt: 0, emptyAlt: 0, missingAltSrcs: [], status: 'ok', message: '' },
     seoScore = 100
   } = seo;
-  const perf = latestStatus?.performance || { performanceScore: 100, vitals: {} };
+  const perf = latestStatus?.performance || {
+    performanceScore: 100,
+    grade: 'A',
+    fcp: null,
+    lcp: null,
+    cls: null,
+    inp: null,
+    tbt: null,
+    speedIndex: null,
+    ttfb: null,
+    pageSizeKb: null,
+    totalNodes: null,
+    unminifiedCount: null,
+  };
+
+  const desktopMetrics = perf?.desktopMetrics || {};
+  const mobileMetrics = perf?.mobileMetrics || {};
+  const pageSpeed = perf?.pageSpeed || {};
+  const responsiveValidation = perf?.responsiveValidation || {};
+  const lowEndDeviceSimulation = perf?.lowEndDeviceSimulation || {};
+  const mobileUsability = perf?.mobileUsability || {};
+  const regressionSignals = Array.isArray(perf?.regressionSignals) ? perf.regressionSignals : [];
+  const derivedPageSizeKb = perf?.desktopMetrics?.pageSizeKb ?? perf?.pageSizeKb ?? 0;
+  const derivedTotalNodes = perf?.desktopMetrics?.totalNodes ?? perf?.totalNodes ?? 0;
+  const derivedUnminifiedCount = perf?.desktopMetrics?.unminifiedCount ?? perf?.unminifiedCount ?? 0;
+
+  const getDesktopMetric = (key) => desktopMetrics?.[key] ?? perf?.[key] ?? null;
+  const getMobileMetric = (key) => mobileMetrics?.[key] ?? null;
+  const pageSpeedImageOpportunities = pageSpeed?.imageOptimization ? Object.entries(pageSpeed.imageOptimization).filter(([_, value]) => !!value).length : 0;
+
+  const [waterfall, setWaterfall] = useState([]);
+  const [trendPoints, setTrendPoints] = useState([]);
+  const [detectedRegressions, setDetectedRegressions] = useState([]);
+  const targetUrl = stats?.url || null;
+
+  // Fetch waterfall resources and trend points for regression analysis
+  useEffect(() => {
+    if (!targetUrl) return;
+
+    let mounted = true;
+
+    const fetchWaterfall = async () => {
+      try {
+        const res = await axios.get(`/api/performance/waterfall?url=${encodeURIComponent(targetUrl)}`);
+        if (mounted && res.data && res.data.data) setWaterfall(res.data.data || []);
+      } catch (e) {
+        // ignore
+      }
+    };
+
+    const fetchTrends = async () => {
+      try {
+        const res = await axios.get(`/api/performance/trends?url=${encodeURIComponent(targetUrl)}`);
+        if (mounted && res.data && res.data.data) setTrendPoints(res.data.data || []);
+      } catch (e) {
+        // ignore
+      }
+    };
+
+    fetchWaterfall();
+    fetchTrends();
+
+    return () => { mounted = false; };
+  }, [targetUrl]);
+
+  // Detect regressions locally from trendPoints
+  useEffect(() => {
+    if (!Array.isArray(trendPoints) || trendPoints.length < 3) {
+      setDetectedRegressions([]);
+      return;
+    }
+
+    // Simple regression heuristics:
+    // - performanceScore drop > 12 points vs previous
+    // - LCP increase > 25% vs previous
+    const regs = [];
+    for (let i = 1; i < trendPoints.length; i++) {
+      const prev = trendPoints[i - 1];
+      const cur = trendPoints[i];
+      const prevScore = Number(prev.performanceScore || prev.perf || 0);
+      const curScore = Number(cur.performanceScore || cur.perf || 0);
+      const prevLcp = parseFloat(String(prev.lcp || '0').replace(/[^0-9.]/g, '')) || 0;
+      const curLcp = parseFloat(String(cur.lcp || '0').replace(/[^0-9.]/g, '')) || 0;
+
+      if ((prevScore - curScore) > 12) {
+        regs.push({ type: 'performance', checkedAt: cur.checkedAt, previous: prevScore, current: curScore, delta: prevScore - curScore, message: `Performance score dropped ${Math.round(prevScore - curScore)} points` });
+      }
+      if (prevLcp > 0 && curLcp > prevLcp * 1.25) {
+        regs.push({ type: 'lcp', checkedAt: cur.checkedAt, previous: prevLcp, current: curLcp, message: `LCP increased from ${prevLcp}s to ${curLcp}s` });
+      }
+    }
+
+    setDetectedRegressions(regs.slice(0, 8));
+  }, [trendPoints]);
+
   const uiUx = latestStatus?.uiUx || { uiHealthScore: 100, lowContrastViolations: [], missingLabelsViolations: [], emptyButtonsViolations: [] };
   const security = latestStatus?.security || { securityScore: 100, headers: { missing: [] } };
 
@@ -56,11 +180,39 @@ export default function UptimeDashboard({ stats, isSocketConnected, onNavigateTo
       };
     });
 
+  const cwvTrendData = Array.isArray(trendPoints) ? trendPoints.map((point) => {
+    const parseValue = (value) => {
+      if (value === null || value === undefined) return null;
+      if (typeof value === 'string') {
+        const parsed = parseFloat(value.replace(/[^0-9.]/g, ''));
+        return Number.isFinite(parsed) ? parsed : null;
+      }
+      return typeof value === 'number' ? value : null;
+    };
+
+    return {
+      time: new Date(point.checkedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      desktopPerformanceScore: Number(point.desktopPerformanceScore || point.performanceScore || 0),
+      mobilePerformanceScore: Number(point.mobilePerformanceScore || 0),
+      desktopLcp: parseValue(point.desktopLcp || point.lcp),
+      desktopCls: parseValue(point.desktopCls || point.cls),
+      desktopInp: parseValue(point.desktopInp || point.inp),
+      desktopTtfb: parseValue(point.desktopTtfb || point.ttfb),
+      mobileLcp: parseValue(point.mobileLcp || null),
+      mobileCls: parseValue(point.mobileCls || null),
+      mobileInp: parseValue(point.mobileInp || null),
+      mobileTtfb: parseValue(point.mobileTtfb || null),
+      monitoringFrequency: point.monitoringFrequency || '1h'
+    };
+  }) : [];
+
+  const latestTrendFrequency = cwvTrendData.length > 0 ? cwvTrendData[cwvTrendData.length - 1].monitoringFrequency : perf?.monitoringFrequency || '1h';
+
   // Export scan logs to CSV spreadsheet
   const downloadCsv = () => {
     const headers = ["Timestamp", "Host URL", "Reachable", "HTTP Status", "Load Time (s)", "DNS Speed (ms)", "SSL (Days Remaining)", "Performance Score", "SEO Score", "Security Score", "Accessibility Score", "Overall SRE"];
     const rows = historyLog.map(h => {
-      const perfVal = h.performance?.performanceScore || 90;
+      const perfVal = getPerfMetric(h.performance, 'performanceScore', 90);
       const seoVal = h.seo?.seoScore || 85;
       const secVal = h.security?.securityScore || 90;
       const uiVal = h.uiUx?.uiHealthScore || 85;
@@ -99,7 +251,7 @@ export default function UptimeDashboard({ stats, isSocketConnected, onNavigateTo
     
     const isUpLabel = h.isUp ? 'OPERATIONAL' : 'DOWN / OFFLINE';
     const isUpColor = h.isUp ? '#10b981' : '#ef4444';
-    const perfVal = h.performance?.performanceScore || 90;
+    const perfVal = getPerfMetric(h.performance, 'performanceScore', 90);
     const seoVal = h.seo?.seoScore || 85;
     const secVal = h.security?.securityScore || 90;
     const uiVal = h.uiUx?.uiHealthScore || 85;
@@ -293,7 +445,7 @@ export default function UptimeDashboard({ stats, isSocketConnected, onNavigateTo
               <tbody>
                   <tr>
                       <td><strong>Core Web Vitals - CLS Hazard Index</strong></td>
-                      <td>${h.performance?.vitals?.cls || '0.00'}</td>
+                      <td>${formatPerfValue(getPerfMetric(h.performance, 'cls', '0.00'))}</td>
                   </tr>
                   <tr>
                       <td><strong>DNS Resolution Speed</strong></td>
@@ -513,6 +665,7 @@ export default function UptimeDashboard({ stats, isSocketConnected, onNavigateTo
               const missing = (imageAnalysis?.missingAlt || 0) + (imageAnalysis?.emptyAlt || 0);
               const pct = total > 0 ? Math.round((valid / total) * 100) : 100;
               return (
+                <>
                 <div className="p-4 bg-dark-900/10 border border-slate-800/40 rounded-xl hover:border-slate-800/40 transition-all">
                   <div className="flex justify-between items-center mb-2">
                     <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider flex items-center gap-1.5">
@@ -544,6 +697,28 @@ export default function UptimeDashboard({ stats, isSocketConnected, onNavigateTo
                     )}
                   </div>
                 </div>
+                {/* Waterfall visualization (simple resource list) */}
+                <div className="rounded-xl border border-slate-800/60 bg-slate-950/40 p-5 mt-4">
+                  <div className="flex items-center justify-between mb-4">
+                    <h4 className="text-sm font-bold text-slate-200">Resource Waterfall</h4>
+                    <span className="text-[10px] uppercase tracking-wider text-slate-500">Top resources</span>
+                  </div>
+                  <div className="space-y-2 text-sm max-h-48 overflow-y-auto">
+                    {waterfall && waterfall.length > 0 ? (
+                      waterfall.map((r, idx) => (
+                        <div key={idx} className="flex items-center justify-between rounded-lg bg-slate-900/40 px-3 py-2">
+                          <div className="truncate pr-4"><span className="text-slate-400 text-xs mr-2">{r.resourceType || 'resource'}</span> <span className="text-slate-300 text-sm truncate">{r.url || r.name || 'unknown'}</span></div>
+                          <div className="text-right">
+                            <div className="text-slate-300 text-sm font-mono">{(r.transferSize || 0)} bytes</div>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-slate-500 text-xs">No waterfall resources available.</div>
+                    )}
+                  </div>
+                </div>
+                </>
               );
             })()}
 
@@ -655,24 +830,75 @@ export default function UptimeDashboard({ stats, isSocketConnected, onNavigateTo
                   { name: 'Cumulative Layout Shift', key: 'cls', unit: '', desc: 'Measures visual content stability.', target: 'Ideal: < 0.10',
                     getReason: (v) => v > 0.25 ? 'Images or ads without explicit dimensions causing layout shifts.' : v > 0.1 ? 'Dynamic content or web fonts causing elements to shift during load.' : 'CLS is within acceptable range.',
                     getSuggestion: (v) => v > 0.1 ? 'Always set width/height on images and video. Avoid inserting content above existing content.' : 'No action needed.' },
-                  { name: 'First Input Delay', key: 'fid', unit: 'ms', desc: 'Measures initial button responsiveness.', target: 'Ideal: < 100ms',
-                    getReason: (v) => v > 300 ? 'Heavy JavaScript execution blocking the main thread.' : v > 100 ? 'Long tasks on the main thread delaying user interaction response.' : 'FID is within acceptable range.',
-                    getSuggestion: (v) => v > 100 ? 'Break up long JavaScript tasks. Use web workers for heavy computations. Defer unused JS.' : 'No action needed.' },
+                
                   { name: 'Interaction to Next Paint', key: 'inp', unit: 'ms', desc: 'Measures visual feedback latency.', target: 'Ideal: < 200ms',
                     getReason: (v) => v > 500 ? 'Slow event callbacks or expensive DOM updates on user interaction.' : v > 200 ? 'Heavy re-renders or synchronous operations blocking interaction response.' : 'INP is within acceptable range.',
                     getSuggestion: (v) => v > 200 ? 'Optimize event handlers. Minimise synchronous DOM operations. Use requestAnimationFrame for visual updates.' : 'No action needed.' },
+                  {
+  name: 'Total Blocking Time',
+  key: 'tbt',
+  unit: 'ms',
+  desc: 'Measures how long the main thread is blocked, delaying user interaction.',
+  target: 'Ideal: < 200ms',
+  getReason: (v) =>
+    v > 600
+      ? 'Long-running JavaScript tasks are blocking the browser.'
+      : v > 200
+      ? 'Heavy JavaScript execution is slowing responsiveness.'
+      : 'Total Blocking Time is within acceptable range.',
+  getSuggestion: (v) =>
+    v > 200
+      ? 'Reduce JavaScript execution time, split long tasks, defer non-critical scripts, and remove unused JavaScript.'
+      : 'No action needed.'
+}, 
                   { name: 'Speed Index', key: 'speedIndex', unit: 's', desc: 'Measures visual progression speed.', target: 'Ideal: < 3.4s',
                     getReason: (v) => v > 5 ? 'Many render-blocking resources slowing visual population of the page.' : v > 3.4 ? 'Slow resource loading order affecting how quickly content becomes visible.' : 'Speed Index is within acceptable range.',
                     getSuggestion: (v) => v > 3.4 ? 'Prioritise above-the-fold content loading. Reduce unused CSS/JS. Enable server-side compression.' : 'No action needed.' },
                 ].map(v => {
-                  const val = perf?.vitals?.[v.key] || 0;
-                  let color = 'text-emerald-400';
-                  let status = 'good';
-                  if (v.key === 'cls' ? val > 0.25 : v.key === 'lcp' ? val > 4.0 : val > 300) {
-                    color = 'text-rose-400'; status = 'poor';
-                  } else if (v.key === 'cls' ? val > 0.1 : v.key === 'lcp' ? val > 2.5 : val > 100) {
-                    color = 'text-amber-400'; status = 'needs-improvement';
-                  }
+               const rawVal = getPerfMetric(perf, v.key, 'N/A');
+
+const val =
+  typeof rawVal === "string"
+    ? parseFloat(rawVal)
+    : rawVal;
+let color = 'text-emerald-400';
+let status = 'good';
+
+if (
+  v.key === 'cls'
+    ? val > 0.25
+    : v.key === 'lcp'
+    ? val > 4
+    : v.key === 'fcp'
+    ? val > 3
+    : v.key === 'speedIndex'
+    ? val > 5
+    : v.key === 'inp'
+    ? val > 500
+    : v.key === 'tbt'
+    ? val > 600
+    : val > 300
+) {
+  color = 'text-rose-400';
+  status = 'poor';
+} else if (
+  v.key === 'cls'
+    ? val > 0.1
+    : v.key === 'lcp'
+    ? val > 2.5
+    : v.key === 'fcp'
+    ? val > 1.8
+    : v.key === 'speedIndex'
+    ? val > 3.4
+    : v.key === 'inp'
+    ? val > 200
+    : v.key === 'tbt'
+    ? val > 200
+    : val > 100
+) {
+  color = 'text-amber-400';
+  status = 'needs-improvement';
+}
                   const reason     = v.getReason(val);
                   const suggestion = v.getSuggestion(val);
 
@@ -680,9 +906,9 @@ export default function UptimeDashboard({ stats, isSocketConnected, onNavigateTo
                     <div key={v.key} className={`bg-dark-800/40 border p-5 rounded-xl flex flex-col justify-between hover:border-indigo-500/25 transition-all ${status === 'poor' ? 'border-rose-500/30' : status === 'needs-improvement' ? 'border-amber-500/30' : 'border-slate-800/60'}`}>
                       <div>
                         <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest block">{v.name}</span>
-                        <h4 className={`text-2xl font-black mt-2 ${color}`}>
-                          {val}{v.unit}
-                        </h4>
+                      <h4 className={`text-2xl font-black mt-2 ${color}`}>
+  {formatPerfValue(rawVal, v.unit)}
+</h4>
                       </div>
                       <div className="mt-4 pt-3 border-t border-slate-800/40 space-y-2 text-[10px]">
                         <p className="text-slate-500">{v.target}</p>
@@ -707,21 +933,199 @@ export default function UptimeDashboard({ stats, isSocketConnected, onNavigateTo
                 })}
               </div>
 
-              {/* Infrastructure Weight details */}
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mt-6">
+                <div className="rounded-xl border border-slate-800/60 bg-slate-950/40 p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <h4 className="text-sm font-bold text-slate-200">Desktop Monitoring</h4>
+                    <span className="text-[10px] uppercase tracking-wider text-slate-500">Full metric set</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                    {[
+                      ['LCP', getDesktopMetric('lcp'), 's'],
+                      ['FCP', getDesktopMetric('fcp'), 's'],
+                      ['INP', getDesktopMetric('inp'), 'ms'],
+                      ['TBT', getDesktopMetric('tbt'), 'ms'],
+                      ['TTI', getDesktopMetric('tti'), 's'],
+                      ['Speed Index', getDesktopMetric('speedIndex'), 's'],
+                      ['TTFB', getDesktopMetric('ttfb'), 'ms'],
+                    ].map(([label, value, unit]) => (
+                      <div key={label} className="flex justify-between items-center rounded-lg bg-slate-900/50 px-3 py-2">
+                        <span className="text-slate-400">{label}</span>
+                        <span className="font-semibold text-slate-200">{formatPerfValue(value, unit)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-slate-800/60 bg-slate-950/40 p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <h4 className="text-sm font-bold text-slate-200">Mobile Monitoring</h4>
+                    <span className="text-[10px] uppercase tracking-wider text-slate-500">Mobile CWV & usability</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                    {[
+                      ['Mobile Score', getMobileMetric('performanceScore'), ''],
+                      ['Mobile LCP', getMobileMetric('lcp'), 's'],
+                      ['Mobile INP', getMobileMetric('inp'), 'ms'],
+                      ['Mobile CLS', getMobileMetric('cls'), ''],
+                      ['Mobile TTFB', getMobileMetric('ttfb'), 'ms'],
+                      ['Mobile Usability', mobileUsability?.score, ''],
+                    ].map(([label, value, unit]) => (
+                      <div key={label} className="flex justify-between items-center rounded-lg bg-slate-900/50 px-3 py-2">
+                        <span className="text-slate-400">{label}</span>
+                        <span className="font-semibold text-slate-200">{formatPerfValue(value, unit)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-800/60 bg-slate-950/40 p-5 mt-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h4 className="text-sm font-bold text-slate-200">Page Speed Monitoring</h4>
+                  <span className="text-[10px] uppercase tracking-wider text-slate-500">Load and resource summary</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 text-sm">
+                  {[
+                    ['Desktop Speed Score', getDesktopMetric('performanceScore'), ''],
+                    ['Mobile Speed Score', getMobileMetric('performanceScore'), ''],
+                    ['Page Load Time', pageSpeed?.pageLoadTime, ''],
+                    ['TTFB', getDesktopMetric('ttfb'), 'ms'],
+                    ['Largest resources', Array.isArray(pageSpeed?.largestResources) ? pageSpeed.largestResources.length : 0, ''],
+                    ['Waterfall items', Array.isArray(pageSpeed?.resourceWaterfall) ? pageSpeed.resourceWaterfall.length : 0, ''],
+                    ['Image optimization', pageSpeedImageOpportunities, 'flags'],
+                    ['Responsive validation', responsiveValidation?.horizontalOverflow || responsiveValidation?.viewportProblems || responsiveValidation?.touchTargetIssues || responsiveValidation?.fontScalingProblems ? 'Issues' : 'Clear', ''],
+                  ].map(([label, value, unit]) => (
+                    <div key={label} className="flex justify-between items-center rounded-lg bg-slate-900/50 px-3 py-2">
+                      <span className="text-slate-400">{label}</span>
+                      <span className="font-semibold text-slate-200">{typeof value === 'number' ? `${value}${unit}` : value || '—'}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6 pt-6 border-t border-slate-800/40 text-xs">
                 <div className="flex justify-between items-center p-3 bg-dark-800/35 rounded-lg border border-slate-800/40">
                   <span className="text-slate-500 font-medium">Total DOM Nodes Count:</span>
-                  <span className="font-bold text-slate-350">{perf?.totalNodes || 240}</span>
+                  <span className="font-bold text-slate-350">{derivedTotalNodes}</span>
                 </div>
                 <div className="flex justify-between items-center p-3 bg-dark-800/35 rounded-lg border border-slate-800/40">
                   <span className="text-slate-500 font-medium">Page Transfer Weight:</span>
-                  <span className="font-bold text-slate-350">{perf?.pageSizeKb || 85} KB</span>
+                  <span className="font-bold text-slate-350">{derivedPageSizeKb} KB</span>
                 </div>
                 <div className="flex justify-between items-center p-3 bg-dark-800/35 rounded-lg border border-slate-800/40">
                   <span className="text-slate-500 font-medium">Unminified Blocking Assets:</span>
-                  <span className="font-bold text-slate-350">{perf?.unminifiedCount || 0} scripts</span>
+                  <span className="font-bold text-slate-350">{derivedUnminifiedCount} scripts</span>
                 </div>
               </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+                <div className="rounded-xl border border-slate-800/60 bg-slate-950/40 p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <h4 className="text-sm font-bold text-slate-200">Desktop vs Mobile Snapshot</h4>
+                    <span className="text-[10px] uppercase tracking-wider text-slate-500">Lighthouse-style</span>
+                  </div>
+                  <div className="space-y-3 text-sm">
+                    <div className="flex justify-between rounded-lg bg-slate-900/50 px-3 py-2">
+                      <span className="text-slate-400">Desktop performance</span>
+                      <span className="font-semibold text-emerald-400">{formatPerfValue(desktopMetrics?.performanceScore ?? perf?.performanceScore ?? null)}</span>
+                    </div>
+                    <div className="flex justify-between rounded-lg bg-slate-900/50 px-3 py-2">
+                      <span className="text-slate-400">Mobile performance</span>
+                      <span className="font-semibold text-sky-400">{formatPerfValue(mobileMetrics?.performanceScore ?? null)}</span>
+                    </div>
+                    <div className="flex justify-between rounded-lg bg-slate-900/50 px-3 py-2">
+                      <span className="text-slate-400">Monitoring cadence</span>
+                      <span className="font-semibold text-slate-300">{perf?.monitoringFrequency || '1h'}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-slate-800/60 bg-slate-950/40 p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <h4 className="text-sm font-bold text-slate-200">Page Speed Findings</h4>
+                    <span className="text-[10px] uppercase tracking-wider text-slate-500">Render budget</span>
+                  </div>
+                  <div className="space-y-3 text-sm">
+                    <div className="flex justify-between rounded-lg bg-slate-900/50 px-3 py-2">
+                      <span className="text-slate-400">Largest resources</span>
+                      <span className="font-semibold text-slate-300">{Array.isArray(pageSpeed?.largestResources) ? pageSpeed.largestResources.length : 0}</span>
+                    </div>
+                    <div className="flex justify-between rounded-lg bg-slate-900/50 px-3 py-2">
+                      <span className="text-slate-400">Render-blocking resources</span>
+                      <span className="font-semibold text-slate-300">{Array.isArray(pageSpeed?.renderBlockingResources) ? pageSpeed.renderBlockingResources.length : 0}</span>
+                    </div>
+                    <div className="flex justify-between rounded-lg bg-slate-900/50 px-3 py-2">
+                      <span className="text-slate-400">Critical request chains</span>
+                      <span className="font-semibold text-slate-300">{Array.isArray(pageSpeed?.criticalRequestChain) ? pageSpeed.criticalRequestChain.length : 0}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+                <div className="rounded-xl border border-slate-800/60 bg-slate-950/40 p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <h4 className="text-sm font-bold text-slate-200">Responsive Validation</h4>
+                    <span className="text-[10px] uppercase tracking-wider text-slate-500">Mobile readiness</span>
+                  </div>
+                  <div className="space-y-2 text-sm">
+                    {[
+                      ['Horizontal overflow', responsiveValidation?.horizontalOverflow],
+                      ['Viewport issues', responsiveValidation?.viewportProblems],
+                      ['Touch targets', responsiveValidation?.touchTargetIssues],
+                      ['Font scaling', responsiveValidation?.fontScalingProblems]
+                    ].map(([label, value]) => (
+                      <div key={label} className="flex items-center justify-between rounded-lg bg-slate-900/50 px-3 py-2">
+                        <span className="text-slate-400">{label}</span>
+                        <span className={`font-semibold ${value ? 'text-amber-400' : 'text-emerald-400'}`}>{value ? 'Detected' : 'Clear'}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-slate-800/60 bg-slate-950/40 p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <h4 className="text-sm font-bold text-slate-200">Low-End Device Simulation</h4>
+                    <span className="text-[10px] uppercase tracking-wider text-slate-500">Throttled profile</span>
+                  </div>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between rounded-lg bg-slate-900/50 px-3 py-2">
+                      <span className="text-slate-400">CPU throttling</span>
+                      <span className="font-semibold text-slate-300">{lowEndDeviceSimulation?.cpuThrottling ? 'Enabled' : 'Disabled'}</span>
+                    </div>
+                    <div className="flex justify-between rounded-lg bg-slate-900/50 px-3 py-2">
+                      <span className="text-slate-400">Network profile</span>
+                      <span className="font-semibold text-slate-300">{lowEndDeviceSimulation?.networkProfile || 'Slow 4G'}</span>
+                    </div>
+                    <div className="flex justify-between rounded-lg bg-slate-900/50 px-3 py-2">
+                      <span className="text-slate-400">Slow network mode</span>
+                      <span className="font-semibold text-slate-300">{lowEndDeviceSimulation?.slowNetwork ? 'On' : 'Off'}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {(regressionSignals.length > 0 || detectedRegressions.length > 0) && (
+                <div className="mt-6 rounded-xl border border-amber-500/30 bg-amber-500/10 p-5">
+                  <h4 className="text-sm font-bold text-amber-300">Regression Signals</h4>
+                  <ul className="mt-3 space-y-2 text-sm text-slate-300">
+                    {regressionSignals.map((signal, index) => (
+                      <li key={`rs-${index}`} className="flex items-start gap-2">
+                        <AlertTriangle className="h-4 w-4 mt-0.5 text-amber-400" />
+                        <span>{signal}</span>
+                      </li>
+                    ))}
+
+                    {detectedRegressions.map((r, i) => (
+                      <li key={`dr-${i}`} className="flex items-start gap-2">
+                        <AlertTriangle className="h-4 w-4 mt-0.5 text-amber-400" />
+                        <span>{r.message} <span className="text-slate-400 ml-2">({new Date(r.checkedAt).toLocaleString()})</span></span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -747,7 +1151,7 @@ export default function UptimeDashboard({ stats, isSocketConnected, onNavigateTo
             
             {/* Top Recharts chronological trends */}
             <div className="glass-card p-6">
-              <div className="flex justify-between items-center border-b border-slate-800 pb-3 mb-6">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-slate-800 pb-3 mb-6 gap-3">
                 <div>
                   <h3 className="text-slate-200 font-extrabold text-base flex items-center gap-2">
                     <Activity className="text-indigo-400 h-5 w-5" />
@@ -755,15 +1159,16 @@ export default function UptimeDashboard({ stats, isSocketConnected, onNavigateTo
                   </h3>
                   <p className="text-[11px] text-slate-500 mt-0.5">Dual-axis telemetry tracking overall score variations vs site load latency speeds.</p>
                 </div>
-                
-                {/* Download CSV button */}
-                <button 
-                  onClick={downloadCsv}
-                  className="px-4 py-2 bg-indigo-600 border-none hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-lg shadow-indigo-600/15 cursor-pointer"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                  <span>Export CSV History</span>
-                </button>
+                <div className="flex flex-col sm:items-end gap-2">
+                  <span className="text-[10px] uppercase tracking-wider text-slate-500">Audit cadence: {latestTrendFrequency}</span>
+                  <button 
+                    onClick={downloadCsv}
+                    className="px-4 py-2 bg-indigo-600 border-none hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-lg shadow-indigo-600/15 cursor-pointer"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    <span>Export CSV History</span>
+                  </button>
+                </div>
               </div>
 
               <div className="h-60 w-full">
@@ -797,6 +1202,80 @@ export default function UptimeDashboard({ stats, isSocketConnected, onNavigateTo
               </div>
             </div>
 
+            {cwvTrendData.length >= 2 && (
+              <div className="glass-card p-6">
+                <div className="flex justify-between items-center border-b border-slate-800 pb-3 mb-6">
+                  <div>
+                    <h3 className="text-slate-200 font-extrabold text-base flex items-center gap-2">
+                      <Layers className="text-indigo-400 h-5 w-5" />
+                      Desktop/Mobile Performance Trends
+                    </h3>
+                    <p className="text-[11px] text-slate-500 mt-0.5">Compare recent Core Web Vitals between desktop and mobile audits.</p>
+                  </div>
+                  <span className="text-[10px] uppercase tracking-wider text-slate-500">Latest cadence: {latestTrendFrequency}</span>
+                </div>
+
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                  <div className="h-64 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={cwvTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" strokeOpacity={0.3} />
+                        <XAxis dataKey="time" stroke="#64748b" fontSize={9} tickLine={false} />
+                        <YAxis stroke="#64748b" fontSize={9} tickLine={false} domain={[0, 100]} />
+                        <Tooltip contentStyle={{ backgroundColor: '#090d16', borderColor: 'rgba(255,255,255,0.06)', borderRadius: '12px', color: '#cbd5e1', fontSize: '11px' }} />
+                        <Legend verticalAlign="top" height={24} iconType="circle" iconSize={6} wrapperStyle={{ fontSize: '10px' }} />
+                        <Line type="monotone" dataKey="desktopPerformanceScore" stroke="#38bdf8" strokeWidth={2} dot={false} name="Desktop Score" />
+                        <Line type="monotone" dataKey="mobilePerformanceScore" stroke="#f472b6" strokeWidth={2} dot={false} name="Mobile Score" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  <div className="h-64 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={cwvTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" strokeOpacity={0.3} />
+                        <XAxis dataKey="time" stroke="#64748b" fontSize={9} tickLine={false} />
+                        <YAxis stroke="#64748b" fontSize={9} tickLine={false} domain={[0, 6]} />
+                        <Tooltip contentStyle={{ backgroundColor: '#090d16', borderColor: 'rgba(255,255,255,0.06)', borderRadius: '12px', color: '#cbd5e1', fontSize: '11px' }} />
+                        <Legend verticalAlign="top" height={24} iconType="circle" iconSize={6} wrapperStyle={{ fontSize: '10px' }} />
+                        <Line type="monotone" dataKey="desktopLcp" stroke="#38bdf8" strokeWidth={2} dot={false} name="Desktop LCP" />
+                        <Line type="monotone" dataKey="mobileLcp" stroke="#f472b6" strokeWidth={2} dot={false} name="Mobile LCP" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mt-6">
+                  <div className="h-64 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={cwvTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" strokeOpacity={0.3} />
+                        <XAxis dataKey="time" stroke="#64748b" fontSize={9} tickLine={false} />
+                        <YAxis stroke="#64748b" fontSize={9} tickLine={false} domain={[0, 0.5]} />
+                        <Tooltip contentStyle={{ backgroundColor: '#090d16', borderColor: 'rgba(255,255,255,0.06)', borderRadius: '12px', color: '#cbd5e1', fontSize: '11px' }} />
+                        <Legend verticalAlign="top" height={24} iconType="circle" iconSize={6} wrapperStyle={{ fontSize: '10px' }} />
+                        <Line type="monotone" dataKey="desktopCls" stroke="#38bdf8" strokeWidth={2} dot={false} name="Desktop CLS" />
+                        <Line type="monotone" dataKey="mobileCls" stroke="#f472b6" strokeWidth={2} dot={false} name="Mobile CLS" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="h-64 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={cwvTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" strokeOpacity={0.3} />
+                        <XAxis dataKey="time" stroke="#64748b" fontSize={9} tickLine={false} />
+                        <YAxis stroke="#64748b" fontSize={9} tickLine={false} domain={[0, 600]} />
+                        <Tooltip contentStyle={{ backgroundColor: '#090d16', borderColor: 'rgba(255,255,255,0.06)', borderRadius: '12px', color: '#cbd5e1', fontSize: '11px' }} />
+                        <Legend verticalAlign="top" height={24} iconType="circle" iconSize={6} wrapperStyle={{ fontSize: '10px' }} />
+                        <Line type="monotone" dataKey="desktopInp" stroke="#38bdf8" strokeWidth={2} dot={false} name="Desktop INP" />
+                        <Line type="monotone" dataKey="mobileInp" stroke="#f472b6" strokeWidth={2} dot={false} name="Mobile INP" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Scans tables and print buttons */}
             <div className="glass-card p-6">
               <h3 className="text-slate-200 font-extrabold text-base border-b border-slate-800 pb-3 mb-4 flex justify-between items-center">
@@ -822,9 +1301,9 @@ export default function UptimeDashboard({ stats, isSocketConnected, onNavigateTo
                   <tbody>
                     {historyLog.map((log) => {
                       const overall = Math.round(
-                        ((log.performance?.performanceScore || 90) + 
-                         (log.seo?.seoScore || 85) + 
-                         (log.security?.securityScore || 90) + 
+                        (getPerfMetric(log.performance, 'performanceScore', 90) +
+                         (log.seo?.seoScore || 85) +
+                         (log.security?.securityScore || 90) +
                          (log.uiUx?.uiHealthScore || 85)) / 4
                       );
                       
@@ -840,7 +1319,7 @@ export default function UptimeDashboard({ stats, isSocketConnected, onNavigateTo
                           </td>
                           <td className="py-3 px-3 text-slate-300 font-mono">{log.statusCode || '—'}</td>
                           <td className="py-3 px-3 text-slate-300 font-mono">{log.isUp ? `${log.loadTimeMs}ms` : '—'}</td>
-                          <td className="py-3 px-3 font-semibold text-emerald-400">{log.performance?.performanceScore || 90}</td>
+                          <td className="py-3 px-3 font-semibold text-emerald-400">{getPerfMetric(log.performance, 'performanceScore', 90)}</td>
                           <td className="py-3 px-3 font-semibold text-violet-400">{log.seo?.seoScore || 85}</td>
                           <td className="py-3 px-3 font-semibold text-sky-400">{log.security?.securityScore || 90}</td>
                           <td className="py-3 px-3">
